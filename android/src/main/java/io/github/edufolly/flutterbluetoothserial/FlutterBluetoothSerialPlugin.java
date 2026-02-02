@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat;
 import android.util.Log;
 import android.util.SparseArray;
 import android.os.AsyncTask;
+import android.os.Handler;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -76,6 +77,8 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
     /// Last ID given to any connection, used to avoid duplicate IDs 
     private int lastConnectionId = 0;
     private Activity activity;
+    private Handler handler = new Handler();
+
     private BinaryMessenger messenger;
     private Context activeContext;
 
@@ -318,6 +321,7 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
         Log.v("FlutterBluetoothSerial", "Attached to engine");
 //        if (true) throw new RuntimeException("FlutterBluetoothSerial Attached to engine");
         messenger = binding.getBinaryMessenger();
+        activeContext = binding.getApplicationContext();
 
         methodChannel = new MethodChannel(messenger, PLUGIN_NAMESPACE + "/methods");
         methodChannel.setMethodCallHandler( new FlutterBluetoothSerialMethodCallHandler() );
@@ -371,6 +375,13 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
             }
         };
         discoveryChannel.setStreamHandler(discoveryStreamHandler);
+
+
+        // BluetoothAdapter를 여기서 초기화합니다.
+        BluetoothManager bluetoothManager = (BluetoothManager) activeContext.getSystemService(Context.BLUETOOTH_SERVICE);
+        if (bluetoothManager != null) {
+            this.bluetoothAdapter = bluetoothManager.getAdapter();
+        }
     }
 
     @Override
@@ -382,10 +393,13 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
     public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
 //        if (true) throw new RuntimeException("FlutterBluetoothSerial Attached to activity");
         this.activity = binding.getActivity();
-        BluetoothManager bluetoothManager = (BluetoothManager) activity.getSystemService(Context.BLUETOOTH_SERVICE);
-        assert bluetoothManager != null;
 
-        this.bluetoothAdapter = bluetoothManager.getAdapter();
+        if (this.bluetoothAdapter == null) {
+            BluetoothManager bluetoothManager = (BluetoothManager) activity.getApplicationContext().getSystemService(Context.BLUETOOTH_SERVICE);
+            assert bluetoothManager != null;
+
+            this.bluetoothAdapter = bluetoothManager.getAdapter();
+        }
 
         binding.addActivityResultListener(
                 (requestCode, resultCode, data) -> {
@@ -418,23 +432,22 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                 }
         );
         activity = binding.getActivity();
-        activeContext = binding.getActivity().getApplicationContext();
-
+//        activeContext = binding.getActivity().getApplicationContext();
     }
 
     @Override
     public void onDetachedFromActivityForConfigChanges() {
-
+        this.activity = null;
     }
 
     @Override
     public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
-
+        this.activity = binding.getActivity();
     }
 
 
     public void onDetachedFromActivity() {
-
+        this.activity = null;
     }
 
 
@@ -518,11 +531,19 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     break;
 
                 case "openSettings":
+                    if (activity == null) {
+                        result.error("no_activity", "Cannot perform operation, no activity available", null);
+                        break;
+                    }
                     ContextCompat.startActivity(activity, new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS), null);
                     result.success(null);
                     break;
 
                 case "requestEnable":
+                    if (activity == null) {
+                        result.error("no_activity", "Cannot perform operation, no activity available", null);
+                        break;
+                    }
                     if (!bluetoothAdapter.isEnabled()) {
                         pendingResultForActivityResult = result;
                         Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
@@ -542,6 +563,10 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     break;
 
                 case "ensurePermissions":
+                    if (activity == null) {
+                        result.error("no_activity", "Cannot perform operation, no activity available", null);
+                        break;
+                    }
                     ensurePermissions(result::success);
                     break;
 
@@ -904,6 +929,10 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     break;
 
                 case "requestDiscoverable": {
+                    if (activity == null) {
+                        result.error("no_activity", "Cannot perform operation, no activity available", null);
+                        break;
+                    }
                     Intent intent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
 
                     if (call.hasArgument("duration")) {
@@ -980,7 +1009,7 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     BluetoothConnectionBase.OnReadCallback orc = new BluetoothConnectionBase.OnReadCallback() {
                         @Override
                         public void onRead(byte[] data) {
-                            activity.runOnUiThread(() -> {
+                            handler.post(() -> { //activity.runOnUiThread(() -> {
                                 if (readSink[0] != null) {
                                     readSink[0].success(data);
                                 }
@@ -991,7 +1020,7 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     BluetoothConnectionBase.OnDisconnectedCallback odc = new BluetoothConnectionBase.OnDisconnectedCallback() {
                         @Override
                         public void onDisconnected(boolean byRemote) {
-                            activity.runOnUiThread(() -> {
+                            handler.post(() -> { //activity.runOnUiThread(() -> {
                                 if (byRemote) {
                                     Log.d(TAG, "onDisconnected by remote (id: " + id + ")");
                                     if (readSink[0] != null) {
@@ -1018,9 +1047,11 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     AsyncTask.execute(() -> {
                         try {
                             connection.connect(address, channel);
-                            activity.runOnUiThread(() -> result.success(id));
+                            handler.post(() -> result.success(id));
+                            //activity.runOnUiThread(() -> result.success(id));
                         } catch (Exception ex) {
-                            activity.runOnUiThread(() -> result.error("connect_error", ex.getMessage(), exceptionToString(ex)));
+                            handler.post(() -> result.error("connect_error", ex.getMessage(), exceptionToString(ex)));
+                            //activity.runOnUiThread(() -> result.error("connect_error", ex.getMessage(), exceptionToString(ex)));
                             connections.remove(id);
                         }
                     });
@@ -1052,9 +1083,11 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                         AsyncTask.execute(() -> {
                             try {
                                 connection.write(string.getBytes());
-                                activity.runOnUiThread(() -> result.success(null));
+                                handler.post(() -> result.success(null));
+                                // activity.runOnUiThread(() -> result.success(null));
                             } catch (Exception ex) {
-                                activity.runOnUiThread(() -> result.error("write_error", ex.getMessage(), exceptionToString(ex)));
+                                handler.post(() -> result.error("write_error", ex.getMessage(), exceptionToString(ex)));
+                                // activity.runOnUiThread(() -> result.error("write_error", ex.getMessage(), exceptionToString(ex)));
                             }
                         });
                     } else if (call.hasArgument("bytes")) {
@@ -1062,9 +1095,11 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                         AsyncTask.execute(() -> {
                             try {
                                 connection.write(bytes);
-                                activity.runOnUiThread(() -> result.success(null));
+                                handler.post(() -> result.success(null));
+                                // activity.runOnUiThread(() -> result.success(null));
                             } catch (Exception ex) {
-                                activity.runOnUiThread(() -> result.error("write_error", ex.getMessage(), exceptionToString(ex)));
+                                handler.post(() -> result.error("write_error", ex.getMessage(), exceptionToString(ex)));
+                                // activity.runOnUiThread(() -> result.error("write_error", ex.getMessage(), exceptionToString(ex)));
                             }
                         });
                     } else {
