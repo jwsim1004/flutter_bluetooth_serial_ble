@@ -424,7 +424,7 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                 (requestCode, permissions, grantResults) -> {
                     switch (requestCode) {
                         case REQUEST_COARSE_LOCATION_PERMISSIONS:
-                            pendingPermissionsEnsureCallbacks.onResult(grantResults[0] == PackageManager.PERMISSION_GRANTED);
+                            pendingPermissionsEnsureCallbacks.onResult(grantResults[0] == PackageManager.PERMISSION_GRANTED, null);
                             pendingPermissionsEnsureCallbacks = null;
                             return true;
                     }
@@ -452,35 +452,39 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
 
 
     private interface EnsurePermissionsCallback {
-        void onResult(boolean granted);
+        void onResult(boolean granted, String message);
     }
 
     EnsurePermissionsCallback pendingPermissionsEnsureCallbacks = null;
 
     private void ensurePermissions(EnsurePermissionsCallback callbacks) {
         if (
-                ContextCompat.checkSelfPermission(activity,
+                ContextCompat.checkSelfPermission(activeContext,
                         Manifest.permission.ACCESS_COARSE_LOCATION)
                         != PackageManager.PERMISSION_GRANTED
-                        || ContextCompat.checkSelfPermission(activity,
+                        || ContextCompat.checkSelfPermission(activeContext,
                         Manifest.permission.ACCESS_FINE_LOCATION)
                         != PackageManager.PERMISSION_GRANTED
-                        || ContextCompat.checkSelfPermission(activity,
+                        || ContextCompat.checkSelfPermission(activeContext,
                         Manifest.permission.BLUETOOTH_SCAN)
                         != PackageManager.PERMISSION_GRANTED
-                        || ContextCompat.checkSelfPermission(activity,
+                        || ContextCompat.checkSelfPermission(activeContext,
                         Manifest.permission.BLUETOOTH_ADVERTISE)
                         != PackageManager.PERMISSION_GRANTED
-                        || ContextCompat.checkSelfPermission(activity,
+                        || ContextCompat.checkSelfPermission(activeContext,
                         Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity,
-                    new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT},
-                    REQUEST_COARSE_LOCATION_PERMISSIONS);
-
-            pendingPermissionsEnsureCallbacks = callbacks;
+            if (activity != null) {
+                ActivityCompat.requestPermissions(activity,
+                        new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT},
+                        REQUEST_COARSE_LOCATION_PERMISSIONS);
+                pendingPermissionsEnsureCallbacks = callbacks;
+            }
+            else {
+                callbacks.onResult(false, "Cannot request Bluetooth permissions without an Activity. The app should grant permissions while in the foreground.");
+            }
         } else {
-            callbacks.onResult(true);
+            callbacks.onResult(true, null);
         }
     }
 
@@ -567,7 +571,13 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                         result.error("no_activity", "Cannot perform operation, no activity available", null);
                         break;
                     }
-                    ensurePermissions(result::success);
+                    ensurePermissions((granted, message) -> {
+                        if (message != null && message.isEmpty() == false) {
+                            result.error("no_permissions", message, null);
+                            return;
+                        }
+                        result.success(granted);
+                    });
                     break;
 
                 case "getState":
@@ -862,9 +872,11 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     break;
 
                 case "getBondedDevices":
-                    ensurePermissions(granted -> {
+                    ensurePermissions((granted, message) -> {
                         if (!granted) {
-                            result.error("no_permissions", "discovering other devices requires location access permission", null);
+                            if (message == null || message.isEmpty())
+                                message = "discovering other devices requires location access permission";
+                            result.error("no_permissions", message, null);
                             return;
                         }
 
@@ -888,9 +900,11 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                     break;
 
                 case "startDiscovery":
-                    ensurePermissions(granted -> {
+                    ensurePermissions((granted, message) -> {
                         if (!granted) {
-                            result.error("no_permissions", "discovering other devices requires location access permission", null);
+                            if (message == null || message.isEmpty())
+                                message = "discovering other devices requires location access permission";
+                            result.error("no_permissions", message, null);
                             return;
                         }
 
